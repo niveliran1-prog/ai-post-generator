@@ -124,6 +124,7 @@ html, body, [class*="css"]  {
     padding: 14px;
     margin-top: 10px;
     margin-bottom: 10px;
+    line-height: 1.8;
 }
 
 div[data-testid="stTextInput"] input,
@@ -155,7 +156,7 @@ hr {
 st.markdown('<div class="main-shell">', unsafe_allow_html=True)
 st.markdown('<div class="hero-title">🎨 מחולל פוסטים חכם ל-Canva</div>', unsafe_allow_html=True)
 st.markdown(
-    '<div class="hero-subtitle">צור 3 גרסאות שונות לפוסט, סטורי או ריל — עם כיוון קריאייטיבי מלא, אלמנטים ויזואליים, המלצות אנימציה, CTA לוואטסאפ וייצוא ל-Canva Bulk Create.</div>',
+    '<div class="hero-subtitle">צור 3 גרסאות שונות לפוסט, סטורי או ריל — עם טקסטים קצרים, CTA ברור, תמונות אוטומטיות וייצוא ל-Canva Bulk Create.</div>',
     unsafe_allow_html=True
 )
 st.markdown('</div>', unsafe_allow_html=True)
@@ -296,16 +297,41 @@ def shorten_caption(caption: str, max_lines: int = 4) -> str:
     return "\n".join(lines[:max_lines])
 
 
-def enforce_business_details(caption: str, business_name: str, whatsapp_link: str) -> str:
+def clean_graphic_cta(cta: str) -> str:
+    if not cta:
+        return "לפרטים"
+
+    blocked_phrases = [
+        "שלחי וואטסאפ",
+        "שלחו וואטסאפ",
+        "כתבי וואטסאפ",
+        "כתבו וואטסאפ",
+        "וואטסאפ",
+        "whatsapp"
+    ]
+
+    clean_cta = cta.strip()
+    for phrase in blocked_phrases:
+        clean_cta = re.sub(phrase, "", clean_cta, flags=re.IGNORECASE).strip()
+
+    clean_cta = re.sub(r"\s+", " ", clean_cta).strip(" -–—")
+
+    if not clean_cta:
+        return "לפרטים"
+
+    return clean_cta
+
+
+def enforce_business_details(caption: str, business_name: str, contact_phone: str) -> str:
     fixed = caption.strip()
 
     if business_name and business_name not in fixed:
         fixed += f"\n— {business_name}"
 
-    if whatsapp_link and "wa.me" not in fixed and "וואטסאפ" not in fixed:
-        fixed += f"\n💬 לפרטים בוואטסאפ"
+    if contact_phone:
+        fixed += f"\n💬 שלחי וואטסאפ: {contact_phone}"
 
-    fixed = shorten_caption(fixed, max_lines=4)
+    fixed = shorten_caption(fixed, max_lines=5)
     return fixed
 
 
@@ -330,35 +356,28 @@ def build_bulk_csv(
     templates: list,
     image_urls: list,
     business_name: str,
-    whatsapp_link: str
+    contact_phone: str
 ) -> bytes:
     rows = []
 
     for i, version in enumerate(versions):
-        hashtags_text = " ".join(version["hashtags"])
+        hashtags_text = " ".join(version.get("hashtags", []))
         caption_fixed = enforce_business_details(
-            version["caption"],
+            version.get("caption", ""),
             business_name,
-            whatsapp_link
+            contact_phone
         )
 
         rows.append({
             "template": templates[i],
             "headline": version.get("headline", ""),
             "subheadline": version.get("subheadline", ""),
-            "cta": version.get("cta_graphic", ""),
+            "cta": clean_graphic_cta(version.get("cta_graphic", "")),
             "caption": caption_fixed,
             "hashtags": hashtags_text,
             "image_url": image_urls[i],
             "business_name": business_name,
-            "whatsapp_link": whatsapp_link,
-            "visual_concept": version.get("visual_concept", ""),
-            "hero_asset_type": version.get("hero_asset_type", ""),
-            "overlay_element": version.get("overlay_element", ""),
-            "animation_style": version.get("animation_style", ""),
-            "background_style": version.get("background_style", ""),
-            "color_direction": version.get("color_direction", ""),
-            "cta_style": version.get("cta_style", "")
+            "contact_phone": contact_phone
         })
 
     df = pd.DataFrame(rows)
@@ -393,11 +412,11 @@ If content type is Story or Reel, also include:
 
 IMPORTANT:
 - Business name should appear naturally inside the caption
-- Use WhatsApp as the main CTA if provided
-- Do not overload the caption with contact details
-- Do not include both phone number and WhatsApp in the caption
-- Caption must be short, sharp, modern and conversion-focused
-- Think like a creative director, not just a copywriter
+- Caption should be short, sharp, modern and conversion-focused
+- The end of the caption should feel natural for a business post
+- Do NOT use WhatsApp wording inside cta_graphic
+- cta_graphic should be short and generic, like:
+  "לפרטים", "קבעי תור", "דברי איתי", "בדקי זמינות"
 
 CAPTION RULES:
 - Max 3-5 short lines
@@ -444,8 +463,7 @@ def generate_posts(
     attention_trigger: str,
     business_name: str,
     business_address: str,
-    contact_phone: str,
-    whatsapp_link: str
+    contact_phone: str
 ) -> dict:
     user_message = f"""
 Create 3 different ready-to-publish social media versions.
@@ -461,17 +479,15 @@ Business details:
 - Business name: {business_name}
 - Business address: {business_address}
 - Contact phone: {contact_phone}
-- WhatsApp link: {whatsapp_link}
 
 User request:
 {prompt}
 
 IMPORTANT:
-- Always include the business name in the caption
-- Use WhatsApp as the main CTA
 - Keep captions short
+- The caption should end naturally with a WhatsApp CTA and the business phone number
+- Do not use WhatsApp wording in cta_graphic
 - Make the output visually attractive and scroll-stopping
-- Add creative direction for Canva execution
 """.strip()
 
     response = client.responses.create(
@@ -511,9 +527,7 @@ with b3:
         placeholder="לדוגמה: 052-1234567"
     )
 
-whatsapp_link = build_whatsapp_link(contact_phone, business_name) if contact_phone else ""
-
-chip_cols = st.columns(4)
+chip_cols = st.columns(3)
 with chip_cols[0]:
     if business_name:
         st.markdown(f'<div class="info-chip">שם העסק: {business_name}</div>', unsafe_allow_html=True)
@@ -523,9 +537,6 @@ with chip_cols[1]:
 with chip_cols[2]:
     if business_address:
         st.markdown(f'<div class="info-chip">כתובת: {business_address}</div>', unsafe_allow_html=True)
-with chip_cols[3]:
-    if whatsapp_link:
-        st.markdown('<div class="info-chip">CTA לוואטסאפ מוכן</div>', unsafe_allow_html=True)
 
 
 # =========================
@@ -648,8 +659,7 @@ if st.button("צור 3 גרסאות", type="primary", use_container_width=True):
                     attention_trigger=attention_trigger,
                     business_name=business_name,
                     business_address=business_address,
-                    contact_phone=contact_phone,
-                    whatsapp_link=whatsapp_link
+                    contact_phone=contact_phone
                 )
                 versions = result.get("versions", [])
 
@@ -666,14 +676,14 @@ if st.button("צור 3 גרסאות", type="primary", use_container_width=True):
 # =========================
 # Render results
 # =========================
-def render_version_card(version: dict, index: int, template_name: str, image_url: str) -> None:
+def render_version_card(version: dict, index: int, image_url: str) -> None:
     hashtags_text = " ".join(version.get("hashtags", []))
     canva_url = get_canva_create_url(platform, content_type)
 
     caption_fixed = enforce_business_details(
         caption=version.get("caption", ""),
         business_name=business_name,
-        whatsapp_link=whatsapp_link
+        contact_phone=contact_phone
     )
 
     full_post = f"""{caption_fixed}
@@ -683,16 +693,14 @@ def render_version_card(version: dict, index: int, template_name: str, image_url
 
     canva_steps = parse_canva_execution(version.get("canva_execution", []))
     storyboard = parse_storyboard(version.get("storyboard", []))
+    cleaned_cta = clean_graphic_cta(version.get("cta_graphic", ""))
 
     st.markdown('<div class="section-card">', unsafe_allow_html=True)
     st.markdown(f'<div class="version-title">גרסה {index}</div>', unsafe_allow_html=True)
 
-    col_a, col_b = st.columns([1, 1])
+    col_a, col_b = st.columns(2)
 
     with col_a:
-        st.markdown('<div class="small-label">תבנית</div>', unsafe_allow_html=True)
-        st.code(template_name, language="markdown")
-
         st.markdown('<div class="small-label">כותרת ראשית</div>', unsafe_allow_html=True)
         st.code(version.get("headline", ""), language="markdown")
 
@@ -700,38 +708,17 @@ def render_version_card(version: dict, index: int, template_name: str, image_url
         st.code(version.get("subheadline", ""), language="markdown")
 
         st.markdown('<div class="small-label">CTA לגרפיקה</div>', unsafe_allow_html=True)
-        st.code(version.get("cta_graphic", ""), language="markdown")
-
-        st.markdown('<div class="small-label">קונספט ויזואלי</div>', unsafe_allow_html=True)
-        st.code(version.get("visual_concept", ""), language="markdown")
-
-        st.markdown('<div class="small-label">נכס ויזואלי מרכזי</div>', unsafe_allow_html=True)
-        st.code(version.get("hero_asset_type", ""), language="markdown")
+        st.code(cleaned_cta, language="markdown")
 
     with col_b:
-        st.markdown('<div class="small-label">אלמנט מושך עין</div>', unsafe_allow_html=True)
-        st.code(version.get("overlay_element", ""), language="markdown")
-
-        st.markdown('<div class="small-label">סגנון אנימציה</div>', unsafe_allow_html=True)
-        st.code(version.get("animation_style", ""), language="markdown")
-
-        st.markdown('<div class="small-label">סגנון רקע</div>', unsafe_allow_html=True)
-        st.code(version.get("background_style", ""), language="markdown")
-
-        st.markdown('<div class="small-label">כיוון צבעים</div>', unsafe_allow_html=True)
-        st.code(version.get("color_direction", ""), language="markdown")
-
-        st.markdown('<div class="small-label">סגנון CTA</div>', unsafe_allow_html=True)
-        st.code(version.get("cta_style", ""), language="markdown")
-
         st.markdown('<div class="small-label">קישור לתמונה</div>', unsafe_allow_html=True)
         st.code(image_url if image_url else "לא הוזן", language="markdown")
 
+        st.markdown('<div class="small-label">Hashtags</div>', unsafe_allow_html=True)
+        st.code(hashtags_text, language="markdown")
+
     st.markdown('<div class="small-label">Caption לפוסט</div>', unsafe_allow_html=True)
     st.code(caption_fixed, language="markdown")
-
-    st.markdown('<div class="small-label">Hashtags</div>', unsafe_allow_html=True)
-    st.code(hashtags_text, language="markdown")
 
     st.markdown('<div class="small-label">Post מלא (מוכן להדבקה)</div>', unsafe_allow_html=True)
     st.code(full_post, language="markdown")
@@ -746,20 +733,11 @@ def render_version_card(version: dict, index: int, template_name: str, image_url
         storyboard_md = "\n".join([f"- {item}" for item in storyboard])
         st.markdown(f'<div class="note-box">{storyboard_md}</div>', unsafe_allow_html=True)
 
-    btn1, btn2 = st.columns(2)
-    with btn1:
-        st.link_button(
-            "פתח פורמט מתאים ב-Canva 🚀",
-            canva_url,
-            use_container_width=True
-        )
-    with btn2:
-        if whatsapp_link:
-            st.link_button(
-                "פתח שיחת וואטסאפ 💬",
-                whatsapp_link,
-                use_container_width=True
-            )
+    st.link_button(
+        "פתח פורמט מתאים ב-Canva 🚀",
+        canva_url,
+        use_container_width=True
+    )
 
     st.markdown('</div>', unsafe_allow_html=True)
 
@@ -770,25 +748,25 @@ if versions:
     templates = [template_1, template_2, template_3]
     image_urls = [image_url_1, image_url_2, image_url_3]
 
-    st.info("לכל גרסה יש עכשיו גם כיוון קריאייטיבי מלא: ויזואל, אנימציה, אלמנטים מושכי עין והוראות ביצוע ב-Canva.")
+    st.info("התצוגה נוקתה מפרטים פנימיים. מוצגים רק הנתונים שצריך באמת כדי לעבוד ולפרסם.")
 
     tab1, tab2, tab3 = st.tabs(["גרסה 1", "גרסה 2", "גרסה 3"])
 
     with tab1:
-        render_version_card(versions[0], 1, template_1, image_url_1)
+        render_version_card(versions[0], 1, image_url_1)
 
     with tab2:
-        render_version_card(versions[1], 2, template_2, image_url_2)
+        render_version_card(versions[1], 2, image_url_2)
 
     with tab3:
-        render_version_card(versions[2], 3, template_3, image_url_3)
+        render_version_card(versions[2], 3, image_url_3)
 
     csv_data = build_bulk_csv(
         versions=versions,
         templates=templates,
         image_urls=image_urls,
         business_name=business_name,
-        whatsapp_link=whatsapp_link
+        contact_phone=contact_phone
     )
 
     st.markdown('<div class="section-title">ייצוא ל-Canva Bulk Create</div>', unsafe_allow_html=True)
